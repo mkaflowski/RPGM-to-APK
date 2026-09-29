@@ -1,0 +1,111 @@
+﻿========================================================================
+  RPG MAKER MV / MZ  ->  APK NA ANDROIDA
+========================================================================
+
+Program robi z gry na RPG Makerze MV lub MZ (wersja na PC, np. ze Steama)
+aplikację na Androida. Gra nie jest emulowana - działa natywnie w silniku
+przeglądarki telefonu, więc chodzi szybko i nie potrzebuje Winlatora /
+GameNative / JoiPlay.
+
+Folder gry na PC NIE jest modyfikowany.
+
+Działa tylko dla RPG Maker MV i MZ (w folderze gry są katalogi "js",
+"data", "img" i plik "index.html", czasem w podfolderze "www").
+NIE działa dla RPG Maker XP / VX / VX Ace / 2000 / 2003.
+
+
+------------------------------------------------------------------------
+WINDOWS
+------------------------------------------------------------------------
+  1. Rozpakuj CAŁY folder (nie uruchamiaj niczego z podglądu ZIP-a).
+  2. Kliknij dwukrotnie  gui.bat  (okno)  albo  convert.bat  (konsola).
+  3. Wybierz grę (gry ze Steama są wykrywane same) albo „Przeglądaj...”
+     i wskaż jej folder.
+  4. Panel „Narzędzia” pokazuje, co jest zainstalowane. Brakujące
+     narzędzia pobierzesz jednym kliknięciem („Pobierz brakujące”)
+     albo zrobi się to przy budowaniu.
+  5. „Zbuduj APK”. Gotowe APK pojawi się w folderze „output”.
+
+
+------------------------------------------------------------------------
+LINUX / STEAM DECK
+------------------------------------------------------------------------
+  1. Rozpakuj CAŁY folder.
+  2. W terminalu, w tym folderze:   sh gui.sh    albo    sh convert.sh
+     (okno potrzebuje tkinter: Steam Deck / Arch „sudo pacman -S tk”,
+      Debian / Ubuntu „sudo apt install python3-tk”)
+
+
+------------------------------------------------------------------------
+PIERWSZE URUCHOMIENIE (potrzebny internet)
+------------------------------------------------------------------------
+  Pobierane jednorazowo do tego folderu, dopiero po Twojej zgodzie
+  (nic nie trafia do systemu, nie trzeba uprawnień administratora):
+    - Python (tylko Windows, jeśli go nie masz)             ~30 MB
+    - Android build-tools (Google)                           ~60 MB
+    - android.jar, Android SDK Platform 35 (Google)          ~60 MB
+    - Java 17 JRE (Eclipse Temurin / Adoptium)               ~45 MB
+    - adb (Google platform-tools) - tylko do instalacji USB   ~7 MB
+  Pobierając składniki Android SDK akceptujesz licencję:
+  https://developer.android.com/studio/terms
+
+  Jeśli masz już Android Studio albo Javę 11+, program ich użyje
+  i nie będzie niczego pobierał.  Sprzątanie: usuń ten folder.
+
+
+------------------------------------------------------------------------
+INSTALACJA APK NA TELEFONIE
+------------------------------------------------------------------------
+  Skopiuj plik .apk z folderu „output” na telefon (kabel USB, chmura...)
+  i otwórz go w telefonie. Android zapyta o zgodę na instalację aplikacji
+  z nieznanych źródeł - trzeba ją dać aplikacji, z której otwierasz plik
+  (np. Pliki / Menedżer plików).
+
+  Albo przez USB: w telefonie włącz Opcje programisty -> Debugowanie USB,
+  podłącz kabel i zaznacz „Zainstaluj na telefonie po zbudowaniu”.
+
+  Kolejna konwersja tej samej gry na tym samym komputerze instaluje się
+  jako aktualizacja - zapisy zostają.
+
+
+------------------------------------------------------------------------
+ZAPISY GRY
+------------------------------------------------------------------------
+  Zapisy są zwykłymi plikami, w TYM SAMYM formacie co na PC:
+    telefon:  Android/data/pl.unitytranslator.rpgm.<nazwa_gry>/files/save/
+    PC:       <folder gry>/save/   (MV: <folder gry>/www/save/)
+  Można je kopiować w obie strony (kablem USB albo przyciskami w oknie).
+
+  UWAGA: odinstalowanie aplikacji z telefonu KASUJE jej zapisy.
+  Najpierw je skopiuj.
+
+
+------------------------------------------------------------------------
+STEROWANIE
+------------------------------------------------------------------------
+  dotyk:            tap = ruch / wybór, dwa palce = anuluj / menu
+  przycisk Wstecz:  jak Esc na PC (anuluj / menu)
+  pad:              działa, jeśli gra obsługuje pada na PC
+
+
+------------------------------------------------------------------------
+OPCJE WERSJI KONSOLOWEJ
+------------------------------------------------------------------------
+  convert.bat --check                          co jest zainstalowane
+  convert.bat --game "D:\Gry\Moja Gra"         bez pytania o grę
+  convert.bat --install --push-saves           instalacja przez adb
+                                               + zapisy z PC
+  convert.bat --pull-saves D:\zapisy --game ... zapisy z telefonu na PC
+  convert.bat --orientation any                obrót także w pionie
+  convert.bat --lang pl                        język (pl / en)
+  convert.bat --help                           wszystkie opcje
+  (Linux: sh convert.sh ...)
+
+
+------------------------------------------------------------------------
+WAŻNE
+------------------------------------------------------------------------
+  Zbudowane APK zawiera pliki gry - NIE udostępniaj go innym osobom.
+  Udostępniać można ten program.
+
+  Discord: https://discord.gg/s87bTQ3wfk

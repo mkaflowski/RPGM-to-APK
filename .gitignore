@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.log
+.tools/
+.python/
+output/
+dist/
+config.json

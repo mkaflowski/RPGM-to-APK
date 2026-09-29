@@ -1,0 +1,107 @@
+﻿========================================================================
+  RPG MAKER MV / MZ  ->  ANDROID APK
+========================================================================
+
+Turns an RPG Maker MV or MZ game (the PC version, e.g. from Steam) into an
+Android app. The game is not emulated - it runs natively in the phone's
+browser engine, so it is fast and needs no Winlator / GameNative / JoiPlay.
+
+Your game folder on the PC is NOT modified.
+
+Works only for RPG Maker MV and MZ (the game folder has "js", "data",
+"img" and "index.html", sometimes inside a "www" subfolder).
+Does NOT work for RPG Maker XP / VX / VX Ace / 2000 / 2003.
+
+
+------------------------------------------------------------------------
+WINDOWS
+------------------------------------------------------------------------
+  1. Unpack the WHOLE folder (do not run anything from the ZIP preview).
+  2. Double-click  gui.bat   (window)   or   convert.bat   (console).
+  3. Pick the game (Steam games are found automatically) or "Browse..."
+     to its folder.
+  4. The "Tools" panel shows what is installed. Missing tools are
+     downloaded with one click ("Download missing") or when you build.
+  5. "Build APK". The APK appears in the "output" folder.
+
+
+------------------------------------------------------------------------
+LINUX / STEAM DECK
+------------------------------------------------------------------------
+  1. Unpack the WHOLE folder.
+  2. In a terminal in that folder:   sh gui.sh    or    sh convert.sh
+     (the window needs tkinter: Steam Deck / Arch "sudo pacman -S tk",
+      Debian / Ubuntu "sudo apt install python3-tk")
+
+
+------------------------------------------------------------------------
+FIRST RUN (internet needed)
+------------------------------------------------------------------------
+  Downloaded once into this folder, only after you agree (nothing is
+  installed in the system, no admin rights needed):
+    - Python (Windows only, if you do not have it)          ~30 MB
+    - Android build-tools (Google)                           ~60 MB
+    - android.jar, Android SDK Platform 35 (Google)          ~60 MB
+    - Java 17 JRE (Eclipse Temurin / Adoptium)               ~45 MB
+    - adb (Google platform-tools) - only for USB install      ~7 MB
+  By downloading Android SDK components you accept its license:
+  https://developer.android.com/studio/terms
+
+  If you already have Android Studio or Java 11+, they are used and
+  nothing is downloaded.  Cleaning up: delete this folder.
+
+
+------------------------------------------------------------------------
+INSTALLING THE APK ON THE PHONE
+------------------------------------------------------------------------
+  Copy the .apk from the "output" folder to the phone (USB cable, cloud...)
+  and open it there. Android asks to allow installing apps from unknown
+  sources - allow it for the app you open the file with (e.g. Files).
+
+  Or over USB: enable Developer options -> USB debugging on the phone,
+  plug in the cable, tick "Install on the phone after building".
+
+  Building the same game again on the same computer installs as an
+  update - the saves stay.
+
+
+------------------------------------------------------------------------
+SAVES
+------------------------------------------------------------------------
+  Saves are normal files, in the SAME format as on the PC:
+    phone:  Android/data/pl.unitytranslator.rpgm.<game_name>/files/save/
+    PC:     <game folder>/save/   (MV: <game folder>/www/save/)
+  They can be copied both ways (USB cable, or the buttons in the window).
+
+  WARNING: uninstalling the app from the phone DELETES its saves.
+  Copy them first.
+
+
+------------------------------------------------------------------------
+CONTROLS
+------------------------------------------------------------------------
+  touch:          tap = move / select, two fingers = cancel / menu
+  Back button:    like Esc on the PC (cancel / menu)
+  gamepad:        works if the game supports a gamepad on the PC
+
+
+------------------------------------------------------------------------
+CONSOLE OPTIONS
+------------------------------------------------------------------------
+  convert.bat --check                          what is installed
+  convert.bat --game "D:\Games\My Game"        no question about the game
+  convert.bat --install --push-saves           install via adb + PC saves
+  convert.bat --pull-saves D:\saves --game ... saves from the phone
+  convert.bat --orientation any                also rotates to portrait
+  convert.bat --lang en                        language (pl / en)
+  convert.bat --help                           all options
+  (Linux: sh convert.sh ...)
+
+
+------------------------------------------------------------------------
+IMPORTANT
+------------------------------------------------------------------------
+  The built APK contains the game files - do NOT share it.
+  Share this program instead.
+
+  Discord: https://discord.gg/s87bTQ3wfk

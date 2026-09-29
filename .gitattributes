@@ -1,0 +1,6 @@
+# LF everywhere (the .sh launchers break with CRLF, and classes.dex.sha256 is
+# computed from android/MainActivity.java). cmd needs CRLF in .bat files.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.dex binary
+*.png binary
