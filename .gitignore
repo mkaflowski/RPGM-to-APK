@@ -6,3 +6,6 @@ __pycache__/
 output/
 dist/
 config.json
+android/gecko-runtime/build/
+android/gecko-runtime/.gradle/
+android/gecko-runtime/local.properties

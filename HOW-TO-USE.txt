@@ -43,12 +43,26 @@ FIRST RUN (internet needed)
     - Android build-tools (Google)                           ~60 MB
     - android.jar, Android SDK Platform 35 (Google)          ~60 MB
     - Java 17 JRE (Eclipse Temurin / Adoptium)               ~45 MB
+    - GeckoView game engine (Mozilla, from this program's
+      GitHub release) - for the default engine               ~87 MB
     - adb (Google platform-tools) - only for USB install      ~7 MB
   By downloading Android SDK components you accept its license:
   https://developer.android.com/studio/terms
 
   If you already have Android Studio or Java 11+, they are used and
   nothing is downloaded.  Cleaning up: delete this folder.
+
+
+------------------------------------------------------------------------
+GAME ENGINE
+------------------------------------------------------------------------
+  GeckoView (default): Mozilla's engine is put into the APK (+~100 MB).
+    It runs 64-bit, so big games do not run out of memory on phones whose
+    own WebView is 32-bit (e.g. AYN Thor) and would crash after a while.
+    Needs a 64-bit ARM phone (practically every phone since ~2017).
+  System WebView: tiny APK, uses the phone's own browser engine, works on
+    every phone. Pick it if the APK must be small or the phone is 32-bit.
+  Window: "Game engine".  Console: --renderer gecko / --renderer webview
 
 
 ------------------------------------------------------------------------

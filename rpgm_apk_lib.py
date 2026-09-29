@@ -14,6 +14,16 @@ Build steps (no Gradle, no Android Studio needed):
   aapt2 link (manifest + icon) -> classes.dex (shipped prebuilt, or javac + d8)
   -> game files into assets/www -> zipalign -> apksigner (v2 signature)
 
+Renderer (BuildOptions.renderer):
+  gecko (default) - the game runs in GeckoView, Mozilla's engine bundled into the APK
+      (+~100 MB, arm64). Its content process is 64-bit. The system WebView renderer is a
+      32-bit process on some devices (e.g. AYN Thor: WebView 109, armeabi-v7a) and big
+      games crash it when its ~3-4 GB address space runs out.
+      The GeckoView runtime pack (prebuilt GeckoView dex, native libraries, compiled
+      resources + their stable ids, merged manifest) is downloaded once; aapt2 links the
+      game APK against it with --stable-ids, so the prebuilt R classes stay valid.
+  webview - the system Android WebView (tiny APK, any CPU).
+
 Missing tools are downloaded on request from official sources into
 <program folder>/.tools: Android build-tools / platform-tools / android.jar
 from Google's Android SDK repository, a Java 17 JRE from Eclipse Temurin.
@@ -40,15 +50,30 @@ from xml.sax.saxutils import escape as xml_escape
 
 from i18n import tr
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 REPO_URL = "https://github.com/mkaflowski/RPGM-to-APK"
 
 HERE = Path(__file__).resolve().parent
 ANDROID_SRC = HERE / "android"
 JAVA_SRC = ANDROID_SRC / "MainActivity.java"
+GECKO_JAVA = ANDROID_SRC / "GeckoHost.java"
+JAVA_SOURCES = (JAVA_SRC, GECKO_JAVA)
 BRIDGE_JS = ANDROID_SRC / "UT_AndroidBridge.js"
-PREBUILT_DEX = ANDROID_SRC / "classes.dex"             # compiled MainActivity.java (no JDK needed)
-PREBUILT_SHA = ANDROID_SRC / "classes.dex.sha256"      # sha256 of the MainActivity.java it came from
+GECKO_JS = ANDROID_SRC / "UT_GeckoHost.js"
+PREBUILT_DEX = ANDROID_SRC / "classes.dex"             # compiled MainActivity.java + GeckoHost.java (no JDK needed)
+PREBUILT_SHA = ANDROID_SRC / "classes.dex.sha256"      # sha256 of the Java sources it came from
+
+# GeckoView runtime pack: built by make_gecko_runtime.py, published as a GitHub release asset.
+RENDERERS = ("gecko", "webview")
+DEFAULT_RENDERER = "gecko"
+GECKO_VERSION = "142.0.1"
+GECKO_PACK = f"gecko-runtime-{GECKO_VERSION}.zip"
+GECKO_PACK_URL = f"{REPO_URL}/releases/download/gecko-runtime-{GECKO_VERSION}/{GECKO_PACK}"
+GECKO_PACK_SHA256 = "14ba4a3b63f277bf7fa357500fc485696b62bf94c33b478d90e636b379500340"
+GECKO_PACK_MB = 87
+GECKO_TEMPLATE_PACKAGE = "pl.unitytranslator.rpgm.geckotemplate"
+GECKO_ABI = "arm64-v8a"
+ANDROID_NS = "http://schemas.android.com/apk/res/android"
 BRIDGE_NAME = "UT_AndroidBridge"
 ACTIVITY = "pl.unitytranslator.rpgm.MainActivity"
 PACKAGE_PREFIX = "pl.unitytranslator.rpgm"
@@ -592,11 +617,59 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
+def sources_sha256() -> str:
+    """One hash over all Java sources compiled into classes.dex."""
+    h = hashlib.sha256()
+    for src in JAVA_SOURCES:
+        h.update(src.name.encode() + b"\0" + src.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+    return h.hexdigest()
+
+
 def prebuilt_dex_ok() -> bool:
     try:
-        return PREBUILT_DEX.is_file() and PREBUILT_SHA.read_text(encoding="utf-8").strip() == _sha256(JAVA_SRC)
+        return PREBUILT_DEX.is_file() and PREBUILT_SHA.read_text(encoding="utf-8").strip() == sources_sha256()
     except OSError:
         return False
+
+
+# ====================================================================== GeckoView runtime pack
+
+def gecko_dir() -> Path:
+    return tools_dir() / f"gecko-runtime-{GECKO_VERSION}"
+
+
+def gecko_ok() -> bool:
+    d = gecko_dir()
+    try:
+        info = json.loads((d / "runtime.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    need = ("template.apk", "res-flats.zip", "stable-ids.txt", "AndroidManifest.xml")
+    return info.get("gecko_version") == GECKO_VERSION and all((d / n).is_file() for n in need)
+
+
+def download_gecko_runtime(rep: Reporter) -> Path:
+    """GeckoView runtime pack -> .tools/gecko-runtime-<version>/ (verified by SHA-256).
+    RPGM_GECKO_PACK=<zip> uses a local pack instead (maintainers, before it is published)."""
+    local = os.environ.get("RPGM_GECKO_PACK")
+    if local:
+        archive = Path(local)
+        rep.log(tr(f"Lokalny pakiet GeckoView: {archive}", f"Local GeckoView pack: {archive}"), "warn")
+    else:
+        archive = _download(GECKO_PACK_URL, tools_dir() / GECKO_PACK, rep, f"GeckoView {GECKO_VERSION}",
+                            sha256=GECKO_PACK_SHA256)
+    dest = gecko_dir()
+    tmp = dest.with_name(dest.name + ".extract")
+    shutil.rmtree(tmp, ignore_errors=True)
+    _extract_zip(archive, tmp)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.replace(tmp, dest)
+    if not local:
+        archive.unlink(missing_ok=True)
+    if not gecko_ok():
+        raise BuildError(f"{archive}: not a GeckoView {GECKO_VERSION} runtime pack")
+    rep.log(f"GeckoView -> {dest}", "ok")
+    return dest
 
 
 def debug_keystore() -> Path:
@@ -674,8 +747,10 @@ class Toolchain:
         return self.run(cmd + list(args), what)
 
 
-def check_tools(sdk_arg: str | None = None, java_arg: str | None = None, rebuild_dex: bool = False) -> Toolchain:
+def check_tools(sdk_arg: str | None = None, java_arg: str | None = None, rebuild_dex: bool = False,
+                renderer: str | None = None) -> Toolchain:
     """Look for everything, download nothing. Fast enough for a status panel (~1 s)."""
+    renderer = renderer or DEFAULT_RENDERER
     tc = Toolchain()
     dex_ok = prebuilt_dex_ok() and not rebuild_dex
     tc.need_javac = not dex_ok
@@ -728,8 +803,18 @@ def check_tools(sdk_arg: str | None = None, java_arg: str | None = None, rebuild
     else:
         can = tc.javac and bool(bt) and _build_tools_ok(tc.build_tools, True)
         comps.append(Component("dex", "classes.dex", True, can,
-                               tr("zostanie skompilowany (javac + d8)", "will be compiled (javac + d8)") if can else
+                               tr("zostanie skompilowany (javac + d8, potrzebny też GeckoView)",
+                                  "will be compiled (javac + d8, needs GeckoView too)") if can else
                                tr("wymaga JDK z javac i d8", "needs a JDK with javac and d8")))
+
+    gok = gecko_ok()
+    comps.append(Component("gecko", "GeckoView", renderer == "gecko" or (not dex_ok and not gok), gok,
+                           str(gecko_dir()) if gok else
+                           (tr("silnik gry (domyślny): 64-bitowy, dołączany do APK (+~100 MB, arm64)",
+                               "game engine (default): 64-bit, bundled into the APK (+~100 MB, arm64)")
+                            if renderer == "gecko" else
+                            tr("nieużywany - wybrany systemowy WebView", "not used - system WebView selected")),
+                           None if gok else f"GeckoView {GECKO_VERSION} runtime (Mozilla, MPL-2.0), ~{GECKO_PACK_MB} MB"))
 
     ks = debug_keystore()
     comps.append(Component("keystore", tr("Klucz podpisu", "Signing key"), False, True,
@@ -748,7 +833,7 @@ def check_tools(sdk_arg: str | None = None, java_arg: str | None = None, rebuild
 def download_components(keys: list[str], rep: Reporter) -> None:
     """Download the given component keys (see Component.download)."""
     order = [("build_tools", download_build_tools), ("android_jar", download_android_jar),
-             ("java", download_jre), ("adb", download_platform_tools)]
+             ("java", download_jre), ("adb", download_platform_tools), ("gecko", download_gecko_runtime)]
     for key, fn in order:
         if key in keys:
             rep.log(tr(f"Pobieram: {key}", f"Downloading: {key}"), "head")
@@ -769,6 +854,7 @@ class BuildOptions:
     ks_alias: str = "androiddebugkey"
     key_pass: str | None = None
     rebuild_dex: bool = False
+    renderer: str = DEFAULT_RENDERER
 
 
 @dataclass
@@ -789,10 +875,15 @@ def compile_dex(tc: Toolchain, work: Path, rep: Reporter, rebuild: bool = False)
                             "MainActivity.java must be compiled, but the Java found has no javac (it is a JRE)."))
     if not _build_tools_ok(tc.build_tools, True):
         raise BuildError(f"{tc.build_tools}: lib/d8.jar missing")
+    gecko_jar = gecko_dir() / "geckoview-classes.jar"
+    if not gecko_jar.is_file():
+        raise BuildError(tr("GeckoHost.java kompiluje się z GeckoView - najpierw pobierz GeckoView (panel Narzędzia).",
+                            "GeckoHost.java compiles against GeckoView - download GeckoView first (Tools panel)."))
     classes = work / "classes"
     classes.mkdir(parents=True, exist_ok=True)
     tc.run([tc.jbin("javac"), "-source", "8", "-target", "8", "-Xlint:-options", "-nowarn",
-            "-encoding", "UTF-8", "-bootclasspath", tc.android_jar, "-d", classes, JAVA_SRC], "javac")
+            "-encoding", "UTF-8", "-bootclasspath", tc.android_jar, "-classpath", gecko_jar,
+            "-d", classes, *JAVA_SOURCES], "javac")
     class_files = sorted(str(p) for p in classes.rglob("*.class"))
     if not class_files:
         raise BuildError("javac: no .class files")
@@ -800,7 +891,7 @@ def compile_dex(tc: Toolchain, work: Path, rep: Reporter, rebuild: bool = False)
     dex_out.mkdir(exist_ok=True)
     tc.java_tool("d8.jar", "com.android.tools.r8.D8",
                  ["--release", "--min-api", str(MIN_SDK), "--lib", str(tc.android_jar),
-                  "--output", str(dex_out), *class_files], "d8")
+                  "--classpath", str(gecko_jar), "--output", str(dex_out), *class_files], "d8")
     dex = dex_out / "classes.dex"
     if not dex.is_file():
         raise BuildError("d8: no classes.dex")
@@ -808,24 +899,65 @@ def compile_dex(tc: Toolchain, work: Path, rep: Reporter, rebuild: bool = False)
             "ok")
     try:                                  # refresh the shipped copy -> the package works without a JDK
         shutil.copy2(dex, PREBUILT_DEX)
-        PREBUILT_SHA.write_text(_sha256(JAVA_SRC) + "\n", encoding="utf-8")
+        PREBUILT_SHA.write_text(sources_sha256() + "\n", encoding="utf-8")
         return PREBUILT_DEX
     except OSError:
         return dex
 
 
-def manifest_xml(package: str, label: str, has_icon: bool, orientation: str) -> str:
+def gecko_manifest_parts(merged: str, package: str) -> tuple[str, str, str]:
+    """GeckoView's merged manifest -> (manifest-level elements, <application> attributes,
+    <application> children) for the game manifest. The template package becomes `package`
+    (provider authorities, the dynamic-receiver permission)."""
+    ET.register_namespace("android", ANDROID_NS)
+    root = ET.fromstring(merged)
+    ours = {"android.hardware.touchscreen", "android.hardware.gamepad"}
+    top, children = [], []
+    for el in root:
+        tag = el.tag
+        if tag in ("uses-sdk", "application"):
+            continue
+        if tag == "uses-feature" and (el.get(f"{{{ANDROID_NS}}}name") in ours or
+                                      el.get(f"{{{ANDROID_NS}}}glEsVersion") is not None):
+            continue                                      # already declared by manifest_xml
+        top.append(ET.tostring(el, encoding="unicode"))
+    app = root.find("application")
+    attrs = ""
+    if app is not None:
+        factory = app.get(f"{{{ANDROID_NS}}}appComponentFactory")
+        if factory:
+            attrs = f'android:appComponentFactory="{factory}" '
+        children = [ET.tostring(el, encoding="unicode") for el in app]
+
+    def fix(text: str) -> str:
+        text = text.replace(GECKO_TEMPLATE_PACKAGE, package)
+        return re.sub(r'\s+xmlns:android="[^"]+"', "", text)  # the root element declares it
+    return fix("\n    ".join(top)), attrs, fix("\n        ".join(children))
+
+
+def manifest_xml(package: str, label: str, has_icon: bool, orientation: str, renderer: str = "webview",
+                 gecko_manifest: str | None = None) -> str:
     icon = 'android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" ' if has_icon else ""
+    top = app_attrs = app_children = ""
+    if renderer == "gecko":
+        if not gecko_manifest:
+            raise BuildError("GeckoView manifest missing")
+        top, app_attrs, app_children = gecko_manifest_parts(gecko_manifest, package)
+        # native libraries compressed in the APK (~100 MB less to download), unpacked at install
+        app_attrs += 'android:extractNativeLibs="true" '
+        app_children = '<meta-data android:name="ut.renderer" android:value="gecko"/>\n        ' + app_children
     return f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="{package}" android:installLocation="auto">
     <uses-feature android:glEsVersion="0x00020000" android:required="true"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <uses-feature android:name="android.hardware.gamepad" android:required="false"/>
-    <application android:label="{xml_escape(label, {'"': "&quot;"})}" {icon}
+    {top}
+    <application android:label="{xml_escape(label, {'"': "&quot;"})}" {icon}{app_attrs}
         android:allowBackup="false" android:hardwareAccelerated="true" android:largeHeap="true"
         android:isGame="true" android:appCategory="game" android:resizeableActivity="true"
         android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        {app_children}
         <activity android:name="{ACTIVITY}" android:exported="true" android:launchMode="singleTask"
             android:screenOrientation="{ORIENTATIONS[orientation]}"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|layoutDirection|locale">
@@ -869,16 +1001,31 @@ def link_base_apk(tc: Toolchain, work: Path, opts: BuildOptions, version_code: i
     res = work / "res"
     has_icon = prepare_icon(opts.game.icon, res, rep)
     manifest = work / "AndroidManifest.xml"
-    manifest.write_text(manifest_xml(opts.package, opts.label, has_icon, opts.orientation), encoding="utf-8")
+    gecko = opts.renderer == "gecko"
+    merged = (gecko_dir() / "AndroidManifest.xml").read_text(encoding="utf-8") if gecko else None
+    manifest.write_text(manifest_xml(opts.package, opts.label, has_icon, opts.orientation, opts.renderer, merged),
+                        encoding="utf-8")
     cmd = [tc.exe("aapt2"), "link", "-o", work / "base.apk", "-I", tc.android_jar, "--manifest", manifest,
            "--min-sdk-version", str(MIN_SDK), "--target-sdk-version", str(tc.api),
            "--version-code", str(version_code), "--version-name", version_name]
+    if gecko:
+        # GeckoView/androidx resources keep the ids its prebuilt R classes were compiled with
+        ids = work / "stable-ids.txt"
+        ids.write_text(stable_ids_for((gecko_dir() / "stable-ids.txt").read_text(encoding="utf-8"), opts.package),
+                       encoding="utf-8")
+        cmd += ["--stable-ids", ids, gecko_dir() / "res-flats.zip"]
     if has_icon:
         flat = work / "res.zip"
         tc.run([tc.exe("aapt2"), "compile", "--dir", res, "-o", flat], "aapt2 compile")
         cmd.append(flat)
     tc.run(cmd, "aapt2 link")
     return work / "base.apk"
+
+
+def stable_ids_for(text: str, package: str) -> str:
+    """aapt2 --stable-ids lines are "<package>:<type>/<name> = 0x7f..."; the pack was linked
+    as GECKO_TEMPLATE_PACKAGE, the game APK uses its own package."""
+    return text.replace(GECKO_TEMPLATE_PACKAGE + ":", package + ":")
 
 
 def patch_plugins_js(raw: bytes) -> bytes:
@@ -911,13 +1058,17 @@ LAYOUT_CSS = ('<style id="ut-android-layout">'
               '</style>')
 
 
-def patch_index_html(raw: bytes) -> bytes:
+GECKO_SCRIPT = '<script src="js/UT_GeckoHost.js"></script>'
+
+
+def patch_index_html(raw: bytes, gecko: bool = False) -> bytes:
     bom = raw.startswith(b"\xef\xbb\xbf")
     text = raw.decode("utf-8-sig", errors="replace")
     if 'id="ut-android-layout"' in text:
         return raw
     text, n = re.subn(r"<meta\s+name\s*=\s*[\"']viewport[\"'][^>]*>", lambda m: VIEWPORT, text, count=1, flags=re.I)
-    inject = ("" if n else VIEWPORT) + LAYOUT_CSS
+    # GeckoView: window.UTAndroid must exist before the engine and the plugins run
+    inject = ("" if n else VIEWPORT) + LAYOUT_CSS + (GECKO_SCRIPT if gecko else "")
     text, n = re.subn(r"(<head[^>]*>)", lambda m: m.group(1) + "\n" + inject, text, count=1, flags=re.I)
     if not n:
         text = inject + text
@@ -970,13 +1121,38 @@ def collect_files(game: Game) -> tuple[list[tuple[Path, str]], int, int]:
     return files, skipped, size
 
 
-def assemble_apk(game: Game, base: Path, dex: Path, unsigned: Path, rep: Reporter) -> dict:
+def gecko_template_entries(template: zipfile.ZipFile) -> tuple[list[zipfile.ZipInfo], list[zipfile.ZipInfo]]:
+    """(dex files, everything else to copy) from the GeckoView template APK. Its manifest,
+    resources and signature are not copied: aapt2 links new ones for the game."""
+    dexes, other = [], []
+    for info in template.infolist():
+        name = info.filename
+        if info.is_dir():
+            continue
+        if re.fullmatch(r"classes\d*\.dex", name):
+            dexes.append(info)
+        elif name in ("AndroidManifest.xml", "resources.arsc") or name.startswith(("res/", "assets/dexopt/")):
+            continue
+        elif name.startswith("META-INF/") and (name.upper().endswith((".SF", ".RSA", ".DSA", ".EC", ".MF"))
+                                               or "/com/android/build/" in name):
+            continue
+        elif name.startswith("com/android/build/"):
+            continue
+        else:
+            other.append(info)
+    dexes.sort(key=lambda i: int(re.sub(r"\D", "", i.filename) or 1))
+    return dexes, other
+
+
+def assemble_apk(game: Game, base: Path, dex: Path, unsigned: Path, rep: Reporter, renderer: str = "webview") -> dict:
     files, skipped, total = collect_files(game)
     rels = {r for _, r in files}
     for need in ("index.html", "js/plugins.js", "data/System.json"):
         if need not in rels:
             raise BuildError(tr(f"W grze brakuje {need}", f"The game is missing {need}"))
-    if total > MAX_APK_BYTES:
+    gecko = renderer == "gecko"
+    limit = MAX_APK_BYTES - (GECKO_PACK_MB * 1_000_000 * 2 if gecko else 0)
+    if total > limit:
         raise BuildError(tr(f"Gra ma {total / 1e9:.1f} GB - APK powyżej ~4 GB wymagałoby ZIP64, którego Android "
                             "nie obsługuje przy instalacji.",
                             f"The game is {total / 1e9:.1f} GB - an APK above ~4 GB would need ZIP64, which "
@@ -984,15 +1160,33 @@ def assemble_apk(game: Game, base: Path, dex: Path, unsigned: Path, rep: Reporte
     rep.log(tr(f"{len(files)} plików, {human_size(total)} (pominięto {skipped} pozycji PC/NW.js)",
                f"{len(files)} files, {human_size(total)} (skipped {skipped} PC/NW.js entries)"))
     extra = {
-        "index.html": patch_index_html((game.web / "index.html").read_bytes()),
+        "index.html": patch_index_html((game.web / "index.html").read_bytes(), gecko),
         "js/plugins.js": patch_plugins_js((game.web / "js/plugins.js").read_bytes()),
         f"js/plugins/{BRIDGE_NAME}.js": BRIDGE_JS.read_bytes(),
     }
+    if gecko:
+        extra["js/UT_GeckoHost.js"] = GECKO_JS.read_bytes()
     index_lines = []
     shutil.copy2(base, unsigned)
     label = tr("Pakowanie plików gry", "Packing game files")
     with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         z.write(dex, "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
+        if gecko:
+            with zipfile.ZipFile(gecko_dir() / "template.apk") as template:
+                dexes, other = gecko_template_entries(template)
+                for n, info in enumerate(dexes, 2):
+                    z.writestr(f"classes{n}.dex", template.read(info), compress_type=zipfile.ZIP_DEFLATED)
+                gecko_label = tr("Dołączanie GeckoView", "Adding GeckoView")
+                gecko_total = sum(i.file_size for i in other) or 1
+                gecko_done = 0
+                for info in other:
+                    # native libraries: compressed (extractNativeLibs=true); the rest as in the template
+                    ctype = zipfile.ZIP_DEFLATED if info.filename.startswith("lib/") else info.compress_type
+                    z.writestr(info.filename, template.read(info), compress_type=ctype)
+                    gecko_done += info.file_size
+                    rep.progress(gecko_label, gecko_done, gecko_total)
+            rep.log(tr(f"GeckoView {GECKO_VERSION} dołączony ({len(dexes)} dex, {len(other)} plików)",
+                       f"GeckoView {GECKO_VERSION} added ({len(dexes)} dex, {len(other)} files)"), "ok")
         done = 0
         for i, (src, rel) in enumerate(files, 1):
             if rel in extra:
@@ -1064,6 +1258,11 @@ def build_apk(opts: BuildOptions, tc: Toolchain, rep: Reporter) -> BuildResult:
         raise BuildError(tr(f"Nieprawidłowa nazwa pakietu: {opts.package}", f"Invalid package name: {opts.package}"))
     if opts.orientation not in ORIENTATIONS:
         raise BuildError(f"orientation: {opts.orientation}")
+    if opts.renderer not in RENDERERS:
+        raise BuildError(f"renderer: {opts.renderer}")
+    if opts.renderer == "gecko" and not gecko_ok():
+        raise BuildError(tr("Brakuje GeckoView - pobierz go w panelu Narzędzia albo wybierz systemowy WebView.",
+                            "GeckoView is missing - download it in the Tools panel or pick the system WebView."))
     out = opts.out
     out.parent.mkdir(parents=True, exist_ok=True)
     unsigned = out.with_name(out.name + ".unsigned.tmp")
@@ -1075,7 +1274,9 @@ def build_apk(opts: BuildOptions, tc: Toolchain, rep: Reporter) -> BuildResult:
             dex = compile_dex(tc, work, rep, opts.rebuild_dex)
             base = link_base_apk(tc, work, opts, version_code, version_name, rep)
             rep.log(tr("manifest + ikona (aapt2)", "manifest + icon (aapt2)"), "ok")
-            stats = assemble_apk(opts.game, base, dex, unsigned, rep)
+            rep.log(tr("silnik: GeckoView (64-bit, w APK)" if opts.renderer == "gecko" else "silnik: systemowy WebView",
+                       "engine: GeckoView (64-bit, in the APK)" if opts.renderer == "gecko" else "engine: system WebView"))
+            stats = assemble_apk(opts.game, base, dex, unsigned, rep, opts.renderer)
         sign_apk(tc, opts, unsigned, out, rep)
     finally:
         unsigned.unlink(missing_ok=True)

@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     static final Charset UTF8 = Charset.forName("UTF-8");
 
     WebView web;
+    GeckoHost gecko;                  // set instead of web in APKs built with the GeckoView renderer
     AssetManager am;
     File root;
     final HashMap<String, Long> files = new HashMap<>();
@@ -110,6 +111,19 @@ public class MainActivity extends Activity {
             w.setAttributes(lp);
         }
 
+        if ("gecko".equals(renderer())) {
+            try {
+                gecko = new GeckoHost(this);
+                gecko.start();
+                hideSystemBars();
+                return;
+            } catch (Exception | LinkageError e) {
+                Log.e(TAG, "GeckoView failed - falling back to the system WebView", e);
+                if (gecko != null) gecko.destroy();
+                gecko = null;
+            }
+        }
+
         WebView.setWebContentsDebuggingEnabled(true);   // chrome://inspect - handy when a game misbehaves
         web = new WebView(this);
         web.setBackgroundColor(Color.BLACK);
@@ -147,6 +161,17 @@ public class MainActivity extends Activity {
         web.loadUrl(BASE + "index.html");
     }
 
+    /** "gecko" or "webview": <meta-data android:name="ut.renderer"> written by the converter. */
+    String renderer() {
+        try {
+            Bundle meta = getPackageManager().getApplicationInfo(getPackageName(),
+                    android.content.pm.PackageManager.GET_META_DATA).metaData;
+            return meta == null ? "webview" : meta.getString("ut.renderer", "webview");
+        } catch (Exception e) {
+            return "webview";
+        }
+    }
+
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
@@ -172,6 +197,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        if (gecko != null) gecko.pause();
         if (web != null) {
             web.evaluateJavascript("window.__utPause && window.__utPause()", null);
             web.onPause();
@@ -183,6 +209,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (gecko != null) gecko.resume();
         if (web != null) {
             web.resumeTimers();
             web.onResume();
@@ -192,6 +219,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (gecko != null) {
+            gecko.destroy();
+            gecko = null;
+        }
         if (web != null) {
             web.destroy();
             web = null;
@@ -203,6 +234,7 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
+        if (gecko != null) gecko.back();
         if (web != null) web.evaluateJavascript("window.__utBack && window.__utBack()", null);
     }
 

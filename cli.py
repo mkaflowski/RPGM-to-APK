@@ -172,8 +172,14 @@ def show_tools(tc: lib.Toolchain, rep: ConsoleReporter):
         print(f"  {color}{mark:4}{RESET} {c.name:22} {DIM}{c.detail}{RESET}")
 
 
+def renderer(args) -> str:
+    """--renderer, else the last choice, else GeckoView."""
+    value = args.renderer or cfg.get("renderer") or lib.DEFAULT_RENDERER
+    return value if value in lib.RENDERERS else lib.DEFAULT_RENDERER
+
+
 def ensure_tools(args, rep: ConsoleReporter, need_adb: bool) -> lib.Toolchain:
-    tc = lib.check_tools(args.sdk, args.jdk, args.rebuild_dex)
+    tc = lib.check_tools(args.sdk, args.jdk, args.rebuild_dex, renderer(args))
     show_tools(tc, rep)
     wanted = [c for c in tc.components if not c.ok and c.download and (c.required or (need_adb and c.key == "adb"))]
     blocking = [c for c in tc.missing_required if not c.download]
@@ -192,7 +198,7 @@ def ensure_tools(args, rep: ConsoleReporter, need_adb: bool) -> lib.Toolchain:
             raise lib.BuildError(tr("Bez tych narzędzi nie da się zbudować APK.",
                                     "The APK cannot be built without these tools."))
         lib.download_components([c.key for c in wanted], rep)
-        tc = lib.check_tools(args.sdk, args.jdk, args.rebuild_dex)
+        tc = lib.check_tools(args.sdk, args.jdk, args.rebuild_dex, renderer(args))
         if not tc.ready:
             show_tools(tc, rep)
             raise lib.BuildError(tr("Nadal czegoś brakuje.", "Something is still missing."))
@@ -230,12 +236,15 @@ def pick_device(tc: lib.Toolchain, serial: str | None) -> lib.Device:
 
 def main() -> int:
     _enable_ansi()
-    ap = argparse.ArgumentParser(description="RPG Maker MV/MZ (PC) -> Android APK (WebView).")
+    ap = argparse.ArgumentParser(description="RPG Maker MV/MZ (PC) -> Android APK (GeckoView or WebView).")
     ap.add_argument("--game", help="game folder (default: Steam + recent / ask)")
     ap.add_argument("--out", help="output .apk (default: output/<title>.apk in the program folder)")
     ap.add_argument("--package", help=f"package name (default {lib.PACKAGE_PREFIX}.<title>)")
     ap.add_argument("--label", help="name under the icon (default: gameTitle from System.json)")
     ap.add_argument("--orientation", choices=sorted(lib.ORIENTATIONS), default=None)
+    ap.add_argument("--renderer", choices=lib.RENDERERS, default=None,
+                    help="gecko (default): GeckoView bundled, 64-bit, +~100 MB, arm64 phones; "
+                         "webview: the system WebView, tiny APK")
     ap.add_argument("--sdk", help="Android SDK folder")
     ap.add_argument("--jdk", help="Java 11+ folder (JAVA_HOME)")
     ap.add_argument("--keystore", help="own keystore (default ~/.android/debug.keystore)")
@@ -256,7 +265,7 @@ def main() -> int:
     banner()
 
     if args.check:
-        tc = lib.check_tools(args.sdk, args.jdk, args.rebuild_dex)
+        tc = lib.check_tools(args.sdk, args.jdk, args.rebuild_dex, renderer(args))
         show_tools(tc, rep)
         if tc.adb:
             for d in lib.list_devices(tc.adb):
@@ -298,7 +307,9 @@ def main() -> int:
     opts = lib.BuildOptions(game=game, out=out, package=package, label=args.label or game.title,
                             orientation=orientation,
                             keystore=Path(args.keystore) if args.keystore else None, ks_pass=args.ks_pass,
-                            ks_alias=args.ks_alias, key_pass=args.key_pass, rebuild_dex=args.rebuild_dex)
+                            ks_alias=args.ks_alias, key_pass=args.key_pass, rebuild_dex=args.rebuild_dex,
+                            renderer=renderer(args))
+    cfg.set_value("renderer", opts.renderer)
     rep.step(3, total, tr("Budowanie APK", "Building the APK"))
     result = lib.build_apk(opts, tc, rep)
     rep.step(4, total, tr("Gotowe APK", "Finished APK"))

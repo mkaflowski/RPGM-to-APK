@@ -90,6 +90,79 @@ class Patches(unittest.TestCase):
         self.assertEqual(doc.documentElement.getAttribute("package"), "com.a.b")
 
 
+MERGED_GECKO_MANIFEST = f'''<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="{lib.GECKO_TEMPLATE_PACKAGE}">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <permission android:name="{lib.GECKO_TEMPLATE_PACKAGE}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:protectionLevel="signature" />
+    <application android:appComponentFactory="androidx.core.app.CoreComponentFactory" android:extractNativeLibs="false">
+        <service android:name="org.mozilla.gecko.process.GeckoChildProcessServices$tab0" android:process=":tab0" />
+        <provider android:name="androidx.startup.InitializationProvider"
+            android:authorities="{lib.GECKO_TEMPLATE_PACKAGE}.androidx-startup" android:exported="false" />
+    </application>
+</manifest>'''
+
+
+class Gecko(unittest.TestCase):
+    def test_default_renderer_is_gecko(self):
+        self.assertEqual(lib.DEFAULT_RENDERER, "gecko")
+        self.assertEqual(lib.BuildOptions(game=None, out=Path("x.apk"), package="a.b", label="x").renderer, "gecko")
+
+    def test_manifest_merges_geckoview(self):
+        text = lib.manifest_xml("com.my.game", "Game", False, "landscape", "gecko", MERGED_GECKO_MANIFEST)
+        doc = xml.dom.minidom.parseString(text.encode())
+        self.assertNotIn(lib.GECKO_TEMPLATE_PACKAGE, text)
+        app = doc.getElementsByTagName("application")[0]
+        self.assertEqual(app.getAttribute("android:appComponentFactory"), "androidx.core.app.CoreComponentFactory")
+        self.assertEqual(app.getAttribute("android:extractNativeLibs"), "true")
+        names = [s.getAttribute("android:name") for s in doc.getElementsByTagName("service")]
+        self.assertIn("org.mozilla.gecko.process.GeckoChildProcessServices$tab0", names)
+        provider = doc.getElementsByTagName("provider")[0]
+        self.assertEqual(provider.getAttribute("android:authorities"), "com.my.game.androidx-startup")
+        meta = {m.getAttribute("android:name"): m.getAttribute("android:value")
+                for m in doc.getElementsByTagName("meta-data")}
+        self.assertEqual(meta.get("ut.renderer"), "gecko")
+        features = [f.getAttribute("android:name") or f.getAttribute("android:glEsVersion")
+                    for f in doc.getElementsByTagName("uses-feature")]
+        self.assertEqual(len(features), len(set(features)), features)     # no duplicates from the merge
+        self.assertEqual(len(doc.getElementsByTagName("uses-sdk")), 0)
+
+    def test_webview_manifest_has_no_gecko(self):
+        text = lib.manifest_xml("com.my.game", "Game", False, "landscape")
+        self.assertNotIn("gecko", text.lower())
+
+    def test_stable_ids_use_game_package(self):
+        ids = f"{lib.GECKO_TEMPLATE_PACKAGE}:string/a = 0x7f010000\n{lib.GECKO_TEMPLATE_PACKAGE}:drawable/b = 0x7f020000\n"
+        out = lib.stable_ids_for(ids, "com.my.game")
+        self.assertEqual(out, "com.my.game:string/a = 0x7f010000\ncom.my.game:drawable/b = 0x7f020000\n")
+
+    def test_index_gets_gecko_host_first(self):
+        raw = b'<html><head><script src="js/main.js"></script></head><body></body></html>'
+        text = lib.patch_index_html(raw, gecko=True).decode()
+        self.assertLess(text.index("UT_GeckoHost.js"), text.index("js/main.js"))
+        self.assertNotIn("UT_GeckoHost", lib.patch_index_html(raw).decode())
+
+    def test_template_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            apk = Path(tmp) / "t.apk"
+            import zipfile
+            with zipfile.ZipFile(apk, "w") as z:
+                for name in ("AndroidManifest.xml", "resources.arsc", "res/a.xml", "classes.dex", "classes2.dex",
+                             "classes10.dex", "META-INF/CERT.RSA", "META-INF/MANIFEST.MF",
+                             "META-INF/services/x.Factory", "lib/arm64-v8a/libxul.so", "assets/omni.ja",
+                             "assets/dexopt/baseline.prof", "kotlin/kotlin.kotlin_builtins"):
+                    z.writestr(name, b"x")
+            with zipfile.ZipFile(apk) as z:
+                dexes, other = lib.gecko_template_entries(z)
+            self.assertEqual([d.filename for d in dexes], ["classes.dex", "classes2.dex", "classes10.dex"])
+            self.assertEqual(sorted(o.filename for o in other),
+                             ["META-INF/services/x.Factory", "assets/omni.ja", "kotlin/kotlin.kotlin_builtins",
+                              "lib/arm64-v8a/libxul.so"])
+
+
 class Games(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -148,7 +221,7 @@ class Tools(unittest.TestCase):
     def test_check_tools_components(self):
         tc = lib.check_tools()
         keys = [c.key for c in tc.components]
-        for k in ("python", "java", "build_tools", "android_jar", "dex", "keystore", "adb"):
+        for k in ("python", "java", "build_tools", "android_jar", "dex", "gecko", "keystore", "adb"):
             self.assertIn(k, keys)
         for c in tc.components:
             if not c.ok and c.required:

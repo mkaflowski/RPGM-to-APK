@@ -12,9 +12,11 @@ The package is FLAT - what the user sees after unpacking:
       find_python.bat, bootstrap_python.ps1   Python finder / portable Python (Windows)
       HOW-TO-USE.txt, JAK-UZYWAC.txt, README.md
       gui.py, cli.py, rpgm_apk_lib.py, i18n.py, app_config.py
-      android/  MainActivity.java, UT_AndroidBridge.js, classes.dex (+ .sha256)
+      android/  MainActivity.java, GeckoHost.java, UT_AndroidBridge.js, UT_GeckoHost.js,
+                classes.dex (+ .sha256)
 
-Not included: tests/, .tools/ (downloaded on the user's machine), output/,
+Not included: tests/, .tools/ (downloaded on the user's machine, incl. the GeckoView pack),
+make_gecko_runtime.py + android/gecko-runtime/ (maintainer only), output/,
 .python/, logs, config. Standard library only.
 """
 
@@ -33,19 +35,22 @@ FILES = (
     "gui.bat", "gui.sh", "convert.bat", "convert.sh", "find_python.bat", "bootstrap_python.ps1",
     "HOW-TO-USE.txt", "JAK-UZYWAC.txt", "README.md",
     "gui.py", "cli.py", "rpgm_apk_lib.py", "i18n.py", "app_config.py",
-    "android/MainActivity.java", "android/UT_AndroidBridge.js",
+    "android/MainActivity.java", "android/GeckoHost.java", "android/UT_AndroidBridge.js", "android/UT_GeckoHost.js",
     "android/classes.dex", "android/classes.dex.sha256",
 )
 EXECUTABLE = {"gui.sh", "convert.sh"}
+JAVA_SOURCES = ("MainActivity.java", "GeckoHost.java")      # same order as rpgm_apk_lib.JAVA_SOURCES
 
 
 def check_dex() -> None:
-    src = os.path.join(HERE, "android", "MainActivity.java")
+    h = hashlib.sha256()
+    for name in JAVA_SOURCES:
+        with open(os.path.join(HERE, "android", name), "rb") as fh:
+            h.update(name.encode() + b"\0" + fh.read().replace(b"\r\n", b"\n") + b"\0")
     sha = open(os.path.join(HERE, "android", "classes.dex.sha256"), encoding="utf-8").read().strip()
-    with open(src, "rb") as fh:
-        if hashlib.sha256(fh.read().replace(b"\r\n", b"\n")).hexdigest() != sha:
-            sys.exit("android/classes.dex is older than MainActivity.java - build any game once with "
-                     "`python cli.py --rebuild-dex` (needs a JDK), then run make_dist.py again.")
+    if h.hexdigest() != sha:
+        sys.exit("android/classes.dex is older than the Java sources - build any game once with "
+                 "`python cli.py --rebuild-dex` (needs a JDK and GeckoView), then run make_dist.py again.")
 
 
 def build(out_dir: str, name: str, clean: bool, make_zip: bool) -> int:

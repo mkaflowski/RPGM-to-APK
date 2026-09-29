@@ -1,0 +1,11 @@
+// Maintainer-only: builds the GeckoView runtime pack (tools/make_gecko_runtime.py).
+// Users never run Gradle - they download the finished pack.
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google(); mavenCentral()
+        maven { url 'https://maven.mozilla.org/maven2/'; content { includeGroup 'org.mozilla.geckoview' } }
+    }
+}
+rootProject.name = 'gecko-runtime'

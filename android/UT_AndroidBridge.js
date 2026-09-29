@@ -446,7 +446,8 @@
     // links opened by plugins (window.open) -> the phone's browser
     var origOpen = window.open;
     window.open = function(url) {
-        if (url && /^(https?|mailto):/i.test(String(url)) && String(url).indexOf("appassets.androidplatform.net") < 0) {
+        if (url && /^(https?|mailto):/i.test(String(url)) && String(url).indexOf("appassets.androidplatform.net") < 0 &&
+                String(url).indexOf(location.origin + "/") !== 0) {
             B.openUrl(String(url));
             return null;
         }

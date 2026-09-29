@@ -45,12 +45,26 @@ PIERWSZE URUCHOMIENIE (potrzebny internet)
     - Android build-tools (Google)                           ~60 MB
     - android.jar, Android SDK Platform 35 (Google)          ~60 MB
     - Java 17 JRE (Eclipse Temurin / Adoptium)               ~45 MB
+    - silnik gry GeckoView (Mozilla, z wydania programu
+      na GitHubie) - dla domyślnego silnika                ~87 MB
     - adb (Google platform-tools) - tylko do instalacji USB   ~7 MB
   Pobierając składniki Android SDK akceptujesz licencję:
   https://developer.android.com/studio/terms
 
   Jeśli masz już Android Studio albo Javę 11+, program ich użyje
   i nie będzie niczego pobierał.  Sprzątanie: usuń ten folder.
+
+
+------------------------------------------------------------------------
+SILNIK GRY
+------------------------------------------------------------------------
+  GeckoView (domyślny): silnik Mozilli trafia do APK (+~100 MB).
+    Działa jako proces 64-bitowy, więc duże gry nie wyczerpują pamięci na
+    telefonach z 32-bitowym WebView (np. AYN Thor), gdzie po pewnym czasie
+    się wywracały. Wymaga 64-bitowego telefonu ARM (praktycznie każdy od ~2017).
+  Systemowy WebView: małe APK, silnik przeglądarki telefonu, działa na każdym
+    telefonie. Wybierz go, gdy APK ma być małe albo telefon jest 32-bitowy.
+  Okno: "Silnik gry".  Konsola: --renderer gecko / --renderer webview
 
 
 ------------------------------------------------------------------------

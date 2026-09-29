@@ -110,6 +110,12 @@ def short_home(text: str) -> str:
     return text.replace(home, "~") if home and len(home) > 3 else text
 
 
+def renderer_labels() -> dict:
+    return {"gecko": tr("GeckoView - zalecany (64-bit, +~100 MB, telefony ARM64)",
+                        "GeckoView - recommended (64-bit, +~100 MB, ARM64 phones)"),
+            "webview": tr("systemowy WebView (małe APK)", "system WebView (small APK)")}
+
+
 def orientation_labels() -> dict:
     return {"landscape": tr("poziomo (obrót 180°)", "landscape (rotates 180°)"),
             "portrait": tr("pionowo", "portrait"),
@@ -254,10 +260,19 @@ class App:
         self.orient_var = tk.StringVar(value=self.orient_labels.get(cfg.get("orientation") or "landscape"))
         ttk.Combobox(box, textvariable=self.orient_var, values=list(self.orient_labels.values()),
                      state="readonly", width=28).grid(row=2, column=1, sticky="w", pady=2)
-        ttk.Label(box, text=tr("Plik APK:", "APK file:")).grid(row=3, column=0, sticky="w")
+        ttk.Label(box, text=tr("Silnik gry:", "Game engine:")).grid(row=3, column=0, sticky="w")
+        self.renderer_labels = renderer_labels()
+        saved = cfg.get("renderer")
+        self.renderer_var = tk.StringVar(value=self.renderer_labels.get(saved if saved in lib.RENDERERS
+                                                                        else lib.DEFAULT_RENDERER))
+        renderer_combo = ttk.Combobox(box, textvariable=self.renderer_var, values=list(self.renderer_labels.values()),
+                                      state="readonly", width=52)
+        renderer_combo.grid(row=3, column=1, columnspan=2, sticky="w", pady=2)
+        renderer_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_tools())
+        ttk.Label(box, text=tr("Plik APK:", "APK file:")).grid(row=4, column=0, sticky="w")
         self.out_var = tk.StringVar()
-        ttk.Entry(box, textvariable=self.out_var).grid(row=3, column=1, sticky="ew", pady=2)
-        self._btn(box, "...", self.browse_out, width=3).grid(row=3, column=2, padx=(6, 0))
+        ttk.Entry(box, textvariable=self.out_var).grid(row=4, column=1, sticky="ew", pady=2)
+        self._btn(box, "...", self.browse_out, width=3).grid(row=4, column=2, padx=(6, 0))
 
     def _build_phone(self, parent):
         box = ttk.LabelFrame(parent, text=tr(" Telefon przez USB (opcjonalnie) ", " Phone over USB (optional) "),
@@ -441,6 +456,8 @@ class App:
         return f"{g.title}   [{g.engine}]   {g.folder}"
 
     def refresh_all(self):
+        renderer = self._renderer()
+
         def work(rep):
             games, seen = [], set()
             for path in cfg.recent_games():
@@ -454,7 +471,7 @@ class App:
                 if key not in seen:
                     seen.add(key)
                     unique.append(g)
-            tc = lib.check_tools()
+            tc = lib.check_tools(renderer=renderer)
             devices = lib.list_devices(tc.adb) if tc.adb else []
             return unique, tc, devices
 
@@ -606,8 +623,10 @@ class App:
             self.tool_detail.set(f"{name}: {getattr(self, '_tool_details', {}).get(sel[0], '')}")
 
     def refresh_tools(self):
+        renderer = self._renderer()
+
         def work(rep):
-            tc = lib.check_tools()
+            tc = lib.check_tools(renderer=renderer)
             return tc, (lib.list_devices(tc.adb) if tc.adb else [])
 
         def done(result, error):
@@ -637,10 +656,11 @@ class App:
         comps = [c for c in self.tc.components if not c.ok and c.download]
         if not comps or not self._confirm_download(comps):
             return
+        renderer = self._renderer()
 
         def work(rep):
             lib.download_components([c.key for c in comps], rep)
-            tc = lib.check_tools()
+            tc = lib.check_tools(renderer=renderer)
             return tc, (lib.list_devices(tc.adb) if tc.adb else [])
 
         def done(result, error):
@@ -716,6 +736,10 @@ class App:
 
     # ------------------------------------------------------------ build
 
+    def _renderer(self) -> str:
+        label = self.renderer_var.get()
+        return next((k for k, v in self.renderer_labels.items() if v == label), lib.DEFAULT_RENDERER)
+
     def _orientation(self) -> str:
         label = self.orient_var.get()
         return next((k for k, v in self.orient_labels.items() if v == label), "landscape")
@@ -739,7 +763,8 @@ class App:
         push = self.push_var.get()
         with_phone = install or push
         dev = self.selected_device() if with_phone else None
-        tc = self.tc or lib.check_tools()
+        renderer = self._renderer()
+        tc = lib.check_tools(renderer=renderer)
         need = [c for c in tc.components if not c.ok and c.download and (c.required or (with_phone and c.key == "adb"))]
         blocking = [c for c in tc.missing_required if not c.download]
         if blocking:
@@ -756,8 +781,10 @@ class App:
                 return
             install = push = False
         opts = lib.BuildOptions(game=game, out=out, package=package,
-                                label=self.label_var.get().strip() or game.title, orientation=self._orientation())
+                                label=self.label_var.get().strip() or game.title, orientation=self._orientation(),
+                                renderer=renderer)
         cfg.set_value("orientation", opts.orientation)
+        cfg.set_value("renderer", opts.renderer)
         cfg.set_value("install_after", bool(self.install_var.get()))
         serial = dev.serial if dev else None
 
@@ -766,7 +793,7 @@ class App:
             toolchain = tc
             if need:
                 lib.download_components([c.key for c in need], rep)
-                toolchain = lib.check_tools()
+                toolchain = lib.check_tools(renderer=renderer)
             rep.log(tr(f"Buduję: {game.title} -> {out}", f"Building: {game.title} -> {out}"), "head")
             result = lib.build_apk(opts, toolchain, rep)
             rep.log(f"{result.apk}  ({lib.human_size(result.size)})", "ok")
@@ -819,7 +846,8 @@ class App:
         cfg.set_value("lang", code)
         i18n.set_lang(code)
         state = {"label": self.label_var.get(), "package": self.package_var.get(), "out": self.out_var.get(),
-                 "orient": self._orientation(), "install": self.install_var.get(), "push": self.push_var.get(),
+                 "orient": self._orientation(), "renderer": self._renderer(),
+                 "install": self.install_var.get(), "push": self.push_var.get(),
                  "game": self.game_combo.current(), "device": self.device_combo.current()}
         self.outer.destroy()
         self._init_style()
@@ -828,6 +856,7 @@ class App:
         self.package_var.set(state["package"])
         self.out_var.set(state["out"])
         self.orient_var.set(self.orient_labels[state["orient"]])
+        self.renderer_var.set(self.renderer_labels[state["renderer"]])
         self.install_var.set(state["install"])
         self.push_var.set(state["push"])
         self._set_games(self.games)

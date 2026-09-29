@@ -1,0 +1,44 @@
+// A resource-less app whose only content is GeckoView and its dependencies.
+// Its APK, merged manifest, compiled resources and resource ids become the
+// runtime pack that rpgm-to-apk merges into every game APK with aapt2.
+plugins { id 'com.android.application' version '8.7.3' }
+
+def geckoVersion = project.findProperty('geckoVersion') ?: '142.0.20250827004350'
+
+android {
+    namespace 'pl.unitytranslator.rpgm'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'pl.unitytranslator.rpgm.geckotemplate'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName geckoVersion
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+    // AGP writes the resource ids of this link to intermediates/stable_resource_ids_file;
+    // game APKs are linked with aapt2 --stable-ids <that file>, so the R classes in the
+    // shipped dex keep pointing at the right resources.
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+configurations { geckoCompile }
+
+dependencies {
+    implementation "org.mozilla.geckoview:geckoview-arm64-v8a:${geckoVersion}"
+    geckoCompile "org.mozilla.geckoview:geckoview-arm64-v8a:${geckoVersion}@aar"
+}
+
+// geckoview classes.jar for javac of MainActivity.java / GeckoHost.java
+tasks.register('geckoClassesJar', Copy) {
+    from { configurations.geckoCompile.collect { zipTree(it).matching { include 'classes.jar' } } }
+    into layout.buildDirectory.dir('gecko-classes')
+}
